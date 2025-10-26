@@ -287,4 +287,9 @@ async def root():
 async def start(message: Message, dialog_manager: DialogManager):
     await dialog_manager.start(MySG.window1, mode=StartMode.RESET_STACK)
 
+@dp.message()
+async def debug_message(message: Message):
+    print(f"Received message: {message.text} from {message.from_user.username}")
+    await message.answer(f"Получил: {message.text}")
+
 setup_dialogs(dp)
