@@ -2,6 +2,7 @@
 import os
 import asyncio
 from datetime import date
+from datetime import datetime
 from typing import List
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse
@@ -314,18 +315,215 @@ async def dashboard():
     rows = await conn.fetch("SELECT date, time, author FROM book ORDER BY date, time")
     await conn.close()
 
-    html = """
-    <html>
-    <head><title>Бронирования</title></head>
-    <body>
-        <h2>Забронированные слоты</h2>
-        <table border="1" cellpadding="8">
-            <tr><th>Дата</th><th>Время</th><th>Автор</th></tr>
-    """
+    # Подсчет статистики
+    total_bookings = len(rows)
+    today = date.today()
+    today_bookings = len([r for r in rows if r['date'] == today])
+    
+    # Группировка по датам
+    from collections import defaultdict
+    bookings_by_date = defaultdict(list)
     for r in rows:
-        html += f"<tr><td>{r['date']}</td><td>{r['time']}</td><td>@{r['author']}</td></tr>"
-    html += "</table></body></html>"
+        bookings_by_date[r['date']].append(r)
+
+    html = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>📅 Бронирования</title>
+        <meta charset="utf-8">
+        <style>
+            body {{
+                font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+                margin: 0;
+                padding: 20px;
+                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                min-height: 100vh;
+            }}
+            .container {{
+                max-width: 1200px;
+                margin: 0 auto;
+                background: white;
+                border-radius: 15px;
+                box-shadow: 0 10px 30px rgba(0,0,0,0.3);
+                overflow: hidden;
+            }}
+            .header {{
+                background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+                color: white;
+                padding: 30px;
+                text-align: center;
+            }}
+            .stats {{
+                display: flex;
+                justify-content: space-around;
+                background: #f8f9fa;
+                padding: 20px;
+                border-bottom: 1px solid #e9ecef;
+            }}
+            .stat-box {{
+                text-align: center;
+                padding: 15px;
+            }}
+            .stat-number {{
+                font-size: 2em;
+                font-weight: bold;
+                color: #4facfe;
+            }}
+            .stat-label {{
+                color: #6c757d;
+                font-size: 0.9em;
+            }}
+            .content {{
+                padding: 30px;
+            }}
+            h2 {{
+                color: #333;
+                text-align: center;
+                margin-bottom: 30px;
+            }}
+            table {{
+                width: 100%;
+                border-collapse: collapse;
+                margin-top: 20px;
+                box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            }}
+            th {{
+                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                color: white;
+                padding: 15px;
+                text-align: left;
+                font-weight: 600;
+            }}
+            td {{
+                padding: 12px 15px;
+                border-bottom: 1px solid #e9ecef;
+            }}
+            tr:hover {{
+                background-color: #f8f9fa;
+                transform: scale(1.01);
+                transition: all 0.2s ease;
+            }}
+            tr:nth-child(even) {{
+                background-color: #f8f9fa;
+            }}
+            .date-header {{
+                background: #e9ecef;
+                font-weight: bold;
+                font-size: 1.1em;
+                border-left: 4px solid #4facfe;
+            }}
+            .no-bookings {{
+                text-align: center;
+                color: #6c757d;
+                font-style: italic;
+                padding: 40px;
+            }}
+            .footer {{
+                text-align: center;
+                padding: 20px;
+                color: #6c757d;
+                font-size: 0.9em;
+                border-top: 1px solid #e9ecef;
+            }}
+            @media (max-width: 768px) {{
+                .stats {{
+                    flex-direction: column;
+                }}
+                .container {{
+                    margin: 10px;
+                }}
+                table {{
+                    font-size: 0.9em;
+                }}
+            }}
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <div class="header">
+                <h1>📅 Панель бронирований</h1>
+                <p>Управление временными слотами</p>
+            </div>
+            
+            <div class="stats">
+                <div class="stat-box">
+                    <div class="stat-number">{total_bookings}</div>
+                    <div class="stat-label">Всего бронирований</div>
+                </div>
+                <div class="stat-box">
+                    <div class="stat-number">{today_bookings}</div>
+                    <div class="stat-label">Сегодня</div>
+                </div>
+                <div class="stat-box">
+                    <div class="stat-number">{len(bookings_by_date)}</div>
+                    <div class="stat-label">Дней с бронями</div>
+                </div>
+            </div>
+            
+            <div class="content">
+                <h2>📋 Забронированные слоты</h2>
+    """
+    
+    if not rows:
+        html += '<div class="no-bookings">Пока нет бронирований</div>'
+    else:
+        current_date = None
+        for r in rows:
+            if r['date'] != current_date:
+                if current_date is not None:
+                    html += '</tbody></table><br>'
+                current_date = r['date']
+                html += f'''
+                <table>
+                    <thead>
+                        <tr class="date-header">
+                            <th colspan="3">📅 {current_date}</th>
+                        </tr>
+                        <tr>
+                            <th>Время</th>
+                            <th>Автор</th>
+                            <th>Действия</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                '''
+            
+            # Определяем цвет для времени
+            time_hour = int(r['time'].split(':')[0])
+            time_color = "#28a745" if time_hour < 16 else "#ffc107"
+            
+            html += f'''
+                <tr>
+                    <td>
+                        <span style="color: {time_color}; font-weight: bold;">⏰ {r['time']}</span>
+                    </td>
+                    <td>
+                        <span style="color: #007bff;">👤 @{r['author']}</span>
+                    </td>
+                    <td>
+                        <button onclick="alert('Функция удаления пока недоступна')" 
+                                style="background: #dc3545; color: white; border: none; padding: 5px 10px; border-radius: 3px; cursor: pointer;">
+                            ❌ Удалить
+                        </button>
+                    </td>
+                </tr>
+            '''
+        
+        html += '</tbody></table>'
+    
+    html += """
+            </div>
+            <div class="footer">
+                <p>📊 Система бронирования | Обновлено: {datetime}</p>
+            </div>
+        </div>
+    </body>
+    </html>
+    """.format(datetime=datetime.now().strftime("%d.%m.%Y %H:%M"))
+    
     return HTMLResponse(html)
+
 
 @app.get("/")
 async def root():
