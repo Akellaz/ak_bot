@@ -310,9 +310,40 @@ async def bot_webhook(request: Request):
         return {"error": str(e)}
 
 @app.get("/dashboard")
-async def dashboard():
+async def dashboard(request: Request):
+    from datetime import datetime, timedelta
+    
+    # Получаем параметры фильтрации
+    date_from = request.query_params.get("date_from")
+    date_to = request.query_params.get("date_to")
+    
     conn = await asyncpg.connect(DATABASE_URL)
-    rows = await conn.fetch("SELECT date, time, author FROM book ORDER BY date, time")
+    
+    # Формируем запрос с фильтрацией
+    if date_from and date_to:
+        rows = await conn.fetch("""
+            SELECT date, time, author, id 
+            FROM book 
+            WHERE date >= $1 AND date <= $2 
+            ORDER BY date, time
+        """, date_from, date_to)
+    elif date_from:
+        rows = await conn.fetch("""
+            SELECT date, time, author, id 
+            FROM book 
+            WHERE date >= $1 
+            ORDER BY date, time
+        """, date_from)
+    elif date_to:
+        rows = await conn.fetch("""
+            SELECT date, time, author, id 
+            FROM book 
+            WHERE date <= $1 
+            ORDER BY date, time
+        """, date_to)
+    else:
+        rows = await conn.fetch("SELECT date, time, author, id FROM book ORDER BY date, time")
+    
     await conn.close()
 
     # Подсчет статистики
@@ -320,11 +351,40 @@ async def dashboard():
     today = date.today()
     today_bookings = len([r for r in rows if r['date'] == today])
     
-    # Группировка по датам
+    # Группировка по датам и поиск репетиций
     from collections import defaultdict
     bookings_by_date = defaultdict(list)
     for r in rows:
         bookings_by_date[r['date']].append(r)
+    
+    # Функция для определения репетиций (последовательные часы)
+    def find_rehearsals(bookings):
+        if len(bookings) < 2:
+            return []
+        
+        rehearsals = []
+        current_rehearsal = [bookings[0]]
+        
+        for i in range(1, len(bookings)):
+            prev_time = bookings[i-1]['time']
+            current_time = bookings[i]['time']
+            
+            # Проверяем, идут ли часы подряд
+            prev_hour = int(prev_time.split(':')[0])
+            current_hour = int(current_time.split(':')[0])
+            
+            if current_hour == prev_hour + 1:
+                current_rehearsal.append(bookings[i])
+            else:
+                if len(current_rehearsal) > 1:
+                    rehearsals.append(current_rehearsal[:])
+                current_rehearsal = [bookings[i]]
+        
+        # Не забываем про последнюю репетицию
+        if len(current_rehearsal) > 1:
+            rehearsals.append(current_rehearsal)
+            
+        return rehearsals
 
     html = f"""
     <!DOCTYPE html>
@@ -353,6 +413,41 @@ async def dashboard():
                 color: white;
                 padding: 30px;
                 text-align: center;
+            }}
+            .filters {{
+                background: #f8f9fa;
+                padding: 20px;
+                border-bottom: 1px solid #e9ecef;
+            }}
+            .filter-form {{
+                display: flex;
+                gap: 15px;
+                align-items: end;
+                flex-wrap: wrap;
+            }}
+            .filter-group {{
+                display: flex;
+                flex-direction: column;
+            }}
+            .filter-group label {{
+                font-weight: bold;
+                margin-bottom: 5px;
+                color: #495057;
+            }}
+            .filter-group input, .filter-group button {{
+                padding: 8px 12px;
+                border: 1px solid #ced4da;
+                border-radius: 4px;
+            }}
+            .filter-group button {{
+                background: #007bff;
+                color: white;
+                border: none;
+                cursor: pointer;
+                font-weight: bold;
+            }}
+            .filter-group button:hover {{
+                background: #0056b3;
             }}
             .stats {{
                 display: flex;
@@ -413,11 +508,34 @@ async def dashboard():
                 font-size: 1.1em;
                 border-left: 4px solid #4facfe;
             }}
+            .rehearsal-row {{
+                background: linear-gradient(90deg, #d4edda 0%, #f8f9fa 100%);
+                border-left: 4px solid #28a745 !important;
+            }}
+            .rehearsal-indicator {{
+                background: #28a745;
+                color: white;
+                padding: 2px 6px;
+                border-radius: 3px;
+                font-size: 0.8em;
+                margin-left: 5px;
+            }}
             .no-bookings {{
                 text-align: center;
                 color: #6c757d;
                 font-style: italic;
                 padding: 40px;
+            }}
+            .delete-btn {{
+                background: #dc3545;
+                color: white;
+                border: none;
+                padding: 5px 10px;
+                border-radius: 3px;
+                cursor: pointer;
+            }}
+            .delete-btn:hover {{
+                background: #c82333;
             }}
             .footer {{
                 text-align: center;
@@ -436,6 +554,10 @@ async def dashboard():
                 table {{
                     font-size: 0.9em;
                 }}
+                .filter-form {{
+                    flex-direction: column;
+                    align-items: stretch;
+                }}
             }}
         </style>
     </head>
@@ -444,6 +566,25 @@ async def dashboard():
             <div class="header">
                 <h1>📅 Панель бронирований</h1>
                 <p>Управление временными слотами</p>
+            </div>
+            
+            <div class="filters">
+                <form class="filter-form" method="get">
+                    <div class="filter-group">
+                        <label for="date_from">С даты:</label>
+                        <input type="date" id="date_from" name="date_from" value="{date_from or ''}">
+                    </div>
+                    <div class="filter-group">
+                        <label for="date_to">По дату:</label>
+                        <input type="date" id="date_to" name="date_to" value="{date_to or ''}">
+                    </div>
+                    <div class="filter-group">
+                        <button type="submit">🔍 Фильтровать</button>
+                    </div>
+                    <div class="filter-group">
+                        <button type="button" onclick="window.location.href='/dashboard'">🔄 Сбросить</button>
+                    </div>
+                </form>
             </div>
             
             <div class="stats">
@@ -469,48 +610,62 @@ async def dashboard():
         html += '<div class="no-bookings">Пока нет бронирований</div>'
     else:
         current_date = None
-        for r in rows:
-            if r['date'] != current_date:
-                if current_date is not None:
-                    html += '</tbody></table><br>'
-                current_date = r['date']
-                html += f'''
-                <table>
-                    <thead>
-                        <tr class="date-header">
-                            <th colspan="3">📅 {current_date}</th>
-                        </tr>
-                        <tr>
-                            <th>Время</th>
-                            <th>Автор</th>
-                            <th>Действия</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                '''
+        for date_key in sorted(bookings_by_date.keys()):
+            bookings_for_date = bookings_by_date[date_key]
+            rehearsals = find_rehearsals(bookings_for_date)
             
-            # Определяем цвет для времени
-            time_hour = int(r['time'].split(':')[0])
-            time_color = "#28a745" if time_hour < 16 else "#ffc107"
+            # Создаем множество ID для репетиций
+            rehearsal_ids = set()
+            for rehearsal in rehearsals:
+                for booking in rehearsal:
+                    rehearsal_ids.add(booking['id'])
             
             html += f'''
-                <tr>
-                    <td>
-                        <span style="color: {time_color}; font-weight: bold;">⏰ {r['time']}</span>
-                    </td>
-                    <td>
-                        <span style="color: #007bff;">👤 @{r['author']}</span>
-                    </td>
-                    <td>
-                        <button onclick="alert('Функция удаления пока недоступна')" 
-                                style="background: #dc3545; color: white; border: none; padding: 5px 10px; border-radius: 3px; cursor: pointer;">
-                            ❌ Удалить
-                        </button>
-                    </td>
-                </tr>
+            <table>
+                <thead>
+                    <tr class="date-header">
+                        <th colspan="4">📅 {date_key}</th>
+                    </tr>
+                    <tr>
+                        <th>Время</th>
+                        <th>Автор</th>
+                        <th>Тип</th>
+                        <th>Действия</th>
+                    </tr>
+                </thead>
+                <tbody>
             '''
-        
-        html += '</tbody></table>'
+            
+            for booking in bookings_for_date:
+                # Определяем цвет для времени
+                time_hour = int(booking['time'].split(':')[0])
+                time_color = "#28a745" if time_hour < 16 else "#ffc107"
+                
+                # Проверяем, является ли частью репетиции
+                is_rehearsal = booking['id'] in rehearsal_ids
+                row_class = "rehearsal-row" if is_rehearsal else ""
+                rehearsal_text = '<span class="rehearsal-indicator">🎭 Репетиция</span>' if is_rehearsal else '<span style="color: #6c757d; font-size: 0.9em;">Обычный слот</span>'
+                
+                html += f'''
+                    <tr class="{row_class}">
+                        <td>
+                            <span style="color: {time_color}; font-weight: bold;">⏰ {booking['time']}</span>
+                        </td>
+                        <td>
+                            <span style="color: #007bff;">👤 @{booking['author']}</span>
+                        </td>
+                        <td>
+                            {rehearsal_text}
+                        </td>
+                        <td>
+                            <button class="delete-btn" onclick="deleteBooking({booking['id']})">
+                                ❌ Удалить
+                            </button>
+                        </td>
+                    </tr>
+                '''
+            
+            html += '</tbody></table><br>'
     
     html += """
             </div>
@@ -518,11 +673,49 @@ async def dashboard():
                 <p>📊 Система бронирования | Обновлено: {datetime}</p>
             </div>
         </div>
+        
+        <script>
+            function deleteBooking(bookingId) {
+                if (confirm('Вы уверены, что хотите удалить это бронирование?')) {
+                    fetch(`/delete_booking/${bookingId}`, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        }
+                    })
+                    .then(response => {
+                        if (response.ok) {
+                            alert('Бронирование удалено!');
+                            location.reload();
+                        } else {
+                            alert('Ошибка при удалении');
+                        }
+                    })
+                    .catch(error => {
+                        console.error('Error:', error);
+                        alert('Ошибка при удалении');
+                    });
+                }
+            }
+        </script>
     </body>
     </html>
     """.format(datetime=datetime.now().strftime("%d.%m.%Y %H:%M"))
     
     return HTMLResponse(html)
+
+# Добавьте новый endpoint для удаления бронирований
+@app.post("/delete_booking/{booking_id}")
+async def delete_booking(booking_id: int):
+    conn = await asyncpg.connect(DATABASE_URL)
+    try:
+        result = await conn.execute("DELETE FROM book WHERE id = $1", booking_id)
+        if result == "DELETE 1":
+            return {"status": "success", "message": "Бронирование удалено"}
+        else:
+            return {"status": "error", "message": "Бронирование не найдено"}
+    finally:
+        await conn.close()
 
 
 @app.get("/")
