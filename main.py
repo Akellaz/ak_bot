@@ -76,6 +76,7 @@ class WeekDay(Text):
 
 class MarkedDay(Text):
     def __init__(self, mark: str, other):
+        super().__init__()
         self.mark = mark
         self.other = other
 
@@ -86,6 +87,7 @@ class MarkedDay(Text):
         if serial_date in selected:
             return self.mark
         return await self.other._render_text(data, manager)
+
 
 class CustomCalendar(Calendar):
     def _init_views(self) -> dict[CalendarScope, CalendarScopeView]:
