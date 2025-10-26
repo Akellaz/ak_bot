@@ -386,8 +386,10 @@ async def dashboard(request: Request):
             
         return rehearsals
 
-    html = f"""
-    <!DOCTYPE html>
+    # Используем f-строки вместо .format для избежания конфликтов
+    current_time_str = datetime.now().strftime("%d.%m.%Y %H:%M")
+    
+    html = f"""<!DOCTYPE html>
     <html>
     <head>
         <title>📅 Бронирования</title>
@@ -667,45 +669,45 @@ async def dashboard(request: Request):
             
             html += '</tbody></table><br>'
     
-    html += """
+    html += f"""
             </div>
             <div class="footer">
-                <p>📊 Система бронирования | Обновлено: {datetime}</p>
+                <p>📊 Система бронирования | Обновлено: {current_time_str}</p>
             </div>
         </div>
         
         <script>
-            function deleteBooking(bookingId) {
-                if (confirm('Вы уверены, что хотите удалить это бронирование?')) {
-                    fetch(`/delete_booking/${bookingId}`, {
+            function deleteBooking(bookingId) {{
+                if (confirm('Вы уверены, что хотите удалить это бронирование?')) {{
+                    fetch(`/delete_booking/${{bookingId}}`, {{
                         method: 'POST',
-                        headers: {
+                        headers: {{
                             'Content-Type': 'application/json',
-                        }
-                    })
-                    .then(response => {
-                        if (response.ok) {
+                        }}
+                    }})
+                    .then(response => {{
+                        if (response.ok) {{
                             alert('Бронирование удалено!');
                             location.reload();
-                        } else {
+                        }} else {{
                             alert('Ошибка при удалении');
-                        }
-                    })
-                    .catch(error => {
+                        }}
+                    }})
+                    .catch(error => {{
                         console.error('Error:', error);
                         alert('Ошибка при удалении');
-                    });
-                }
-            }
+                    }});
+                }}
+            }}
         </script>
     </body>
     </html>
-    """.format(datetime=datetime.now().strftime("%d.%m.%Y %H:%M"))
+    """
     
     return HTMLResponse(html)
 
 # Добавьте новый endpoint для удаления бронирований
-@app.post("/delete_booking/{booking_id}")
+@app.post("/delete_booking/{{booking_id}}")
 async def delete_booking(booking_id: int):
     conn = await asyncpg.connect(DATABASE_URL)
     try:
@@ -716,6 +718,7 @@ async def delete_booking(booking_id: int):
             return {"status": "error", "message": "Бронирование не найдено"}
     finally:
         await conn.close()
+
 
 
 @app.get("/")
