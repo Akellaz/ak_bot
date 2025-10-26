@@ -7,16 +7,14 @@ from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse
 import asyncpg
 from aiogram import Bot, Dispatcher
-from aiogram.types import Message
+from aiogram.types import Message, CallbackQuery
 from aiogram.filters import Command
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram_dialog import Dialog, DialogManager, Window, setup_dialogs, StartMode
 from aiogram_dialog.widgets.kbd import (
     Calendar,
     Multiselect,
-    Next,
-    Back,
-    Button,
+    Button,  # заменили Next на Button
 )
 from aiogram_dialog.widgets.text import Const, Format, Jinja, Text
 from aiogram_dialog.widgets.kbd.calendar_kbd import (
@@ -26,13 +24,10 @@ from aiogram_dialog.widgets.kbd.calendar_kbd import (
     CalendarMonthView,
     CalendarYearsView,
     CalendarScope,
-    CalendarScopeView,
-    CalendarConfig,
+    CalendarConfig,  # убрано CalendarScopeView — не используется
 )
 from aiogram.filters.state import StatesGroup, State
-from aiogram.types import CallbackQuery
-from aiogram import F
-from babel.dates import get_day_names, get_month_names
+from babel.dates import get_day_names
 import operator
 
 # ============= CONFIG =============
@@ -48,7 +43,7 @@ if not DATABASE_URL:
 
 WEB_SERVER_HOST = "0.0.0.0"
 WEB_SERVER_PORT = int(os.getenv("PORT", 8000))
-BASE_WEBHOOK_URL = os.getenv("RENDER_EXTERNAL_URL", f"https://your-render-url.onrender.com")
+BASE_WEBHOOK_URL = os.getenv("RENDER_EXTERNAL_URL", "https://your-render-url.onrender.com").rstrip()
 
 # ============= DB =============
 async def init_db():
@@ -61,6 +56,11 @@ async def init_db():
             time TEXT NOT NULL,
             author TEXT NOT NULL
         )
+    """)
+    # 🔥 ДОБАВЛЕНО: защита от двойного бронирования
+    await conn.execute("""
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_unique_booking 
+        ON book (date, time)
     """)
     await conn.close()
 
@@ -75,7 +75,6 @@ class WeekDay(Text):
 
 class MarkedDay(Text):
     def __init__(self, mark: str, other):
-        super().__init__()
         self.mark = mark
         self.other = other
 
@@ -114,23 +113,19 @@ class CustomCalendar(Calendar):
             ),
         }
 
-# ============= STATES & GLOBAL =============
+# ============= STATES =============
 class MySG(StatesGroup):
     window1 = State()
     window2 = State()
     window3 = State()
 
-# ============= DIALOG CALLBACKS =============
+# ============= CALLBACKS =============
 async def win1_on_date_selected(callback: CallbackQuery, widget, manager: DialogManager, selected_date: date):
     print(f"=== Date selected ===")
     print(f"Selected date: {selected_date}")
     print(f"User: {callback.from_user.username}")
-    
-    # Сохраняем выбранную дату в dialog_data
     manager.dialog_data["selected_date"] = selected_date.isoformat()
     print(f"Saved to dialog_data: {selected_date.isoformat()}")
-    
-    # Пробуем перейти к следующему состоянию
     try:
         await manager.next()
         print("Successfully moved to next state")
@@ -148,7 +143,6 @@ async def get_time(dialog_manager: DialogManager, event_from_user, **kwargs):
         return {"time_slots": [], "time_slots2": [], "count": 0, "count2": 0}
     
     try:
-        # Преобразуем строку в объект date
         selected_date = date.fromisoformat(selected_date_str)
         print(f"Parsed date: {selected_date}")
     except ValueError as e:
@@ -156,8 +150,7 @@ async def get_time(dialog_manager: DialogManager, event_from_user, **kwargs):
         return {"time_slots": [], "time_slots2": [], "count": 0, "count2": 0}
 
     conn = await asyncpg.connect(DATABASE_URL)
-    # Передаем объект date, а не строку
-    rows = await conn.fetch("SELECT time FROM book WHERE date = $1", selected_date)
+    rows = await conn.fetch("SELECT time FROM book WHERE date = $1", selected_date)  # ✅ объект date
     booked_times = {row["time"] for row in rows}
     await conn.close()
 
@@ -176,39 +169,63 @@ async def get_time(dialog_manager: DialogManager, event_from_user, **kwargs):
     print(f"Time slots result: {result}")
     return result
 
-async def getter(dialog_manager: DialogManager, event_from_user, **kwargs):
-    print("getter called - final step")
-    selected_date_str = dialog_manager.dialog_data.get("selected_date")
-    if selected_date_str:
-        try:
-            selected_date = date.fromisoformat(selected_date_str)
-        except ValueError:
-            selected_date = None
-    else:
-        selected_date = None
-        
-    checked = dialog_manager.find("m_time_slots").get_checked()
-    author = event_from_user.username or f"user_{event_from_user.id}"
+# 🔥 НОВАЯ ФУНКЦИЯ: обработка нажатия "Забить"
+async def on_book_click(callback: CallbackQuery, button, manager: DialogManager):
+    from asyncpg import UniqueViolationError
+
+    selected_date_str = manager.dialog_data.get("selected_date")
+    if not selected_date_str:
+        await callback.answer("❌ Не выбрана дата!", show_alert=True)
+        return
+
+    try:
+        selected_date = date.fromisoformat(selected_date_str)
+    except ValueError:
+        await callback.answer("❌ Ошибка даты!", show_alert=True)
+        return
+
+    # 🔥 БЕРЁМ ВЫБОР ИЗ ОБОИХ СПИСКОВ
+    m1 = manager.find("m_time_slots")
+    m2 = manager.find("m_time_slots2")
+    checked1 = m1.get_checked() if m1 else []
+    checked2 = m2.get_checked() if m2 else []
+    checked = list(checked1) + list(checked2)
+
+    if not checked:
+        await callback.answer("❌ Выбери время!", show_alert=True)
+        return
+
+    author = callback.from_user.username or f"user_{callback.from_user.id}"
     name = author
 
-    if checked and selected_date:
-        print(f"Saving booking: date={selected_date}, times={checked}, author={author}")
-        conn = await asyncpg.connect(DATABASE_URL)
+    conn = await asyncpg.connect(DATABASE_URL)
+    try:
         for t in checked:
+            # ✅ Передаём объект date, а не строку
             await conn.execute(
                 "INSERT INTO book (name, date, time, author) VALUES ($1, $2, $3, $4)",
-                name, selected_date, t, author  # Передаем объект date, а не строку
+                name, selected_date, t, author
             )
+        # Сохраняем для финального экрана
+        manager.dialog_data.update({
+            "final_date": selected_date.isoformat(),
+            "final_times": checked,
+            "final_author": author
+        })
+        await manager.next()
+    except UniqueViolationError:
+        await callback.answer("⚠️ Слот уже занят! Выбери другое время.", show_alert=True)
+    finally:
         await conn.close()
-        print("Booking saved successfully")
 
-    result = {
-        "date": selected_date.isoformat() if selected_date else "—",
-        "author_user": author,
-        "times": ", ".join(checked) if checked else "—",
+# 🔥 НОВАЯ ФУНКЦИЯ: только отображение результата (без записи в БД!)
+async def final_getter(dialog_manager: DialogManager, **kwargs):
+    data = dialog_manager.dialog_data
+    return {
+        "date": data.get("final_date", "—"),
+        "author_user": data.get("final_author", "—"),
+        "times": ", ".join(data.get("final_times", [])) or "—",
     }
-    print(f"Getter result: {result}")
-    return result
 
 # ============= DIALOG =============
 dialog = Dialog(
@@ -236,7 +253,8 @@ dialog = Dialog(
             item_id_getter=operator.itemgetter(1),
             items="time_slots2",
         ),
-        Next(text=Const("Забить")),
+        # 🔥 ЗАМЕНА: Next → Button с обработчиком
+        Button(Const("Забить"), id="book_btn", on_click=on_book_click),
         getter=get_time,
         state=MySG.window2,
     ),
@@ -248,7 +266,7 @@ dialog = Dialog(
             "<b>Автор</b>: {{author_user}}\n"
         ),
         state=MySG.window3,
-        getter=getter,
+        getter=final_getter,  # 🔥 новая функция без записи в БД
         parse_mode="html",
     ),
 )
@@ -259,7 +277,6 @@ storage = MemoryStorage()
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(storage=storage)
 
-# Регистрируем диалог и настраиваем
 dp.include_router(dialog)
 setup_dialogs(dp)
 
@@ -311,7 +328,6 @@ async def dashboard():
 async def root():
     return {"status": "OK", "dashboard": "/dashboard"}
 
-# Правильный хендлер для /start
 @dp.message(Command("start"))
 async def start(message: Message, dialog_manager: DialogManager):
     print(f"/start command received from {message.from_user.username}")
@@ -320,4 +336,4 @@ async def start(message: Message, dialog_manager: DialogManager):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="0.0.0.0", port=WEB_SERVER_PORT)
