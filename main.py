@@ -85,12 +85,6 @@ class MarkedDay:
             return self.mark
         return await self.other._render_text(data, manager)
 
-class Month:
-    async def _render_text(self, data, manager: DialogManager) -> str:
-        selected_date: date = data["date"]
-        locale = manager.event.from_user.language_code or "en"
-        return get_month_names("wide", context="stand-alone", locale=locale)[selected_date.month].title()
-
 class CustomCalendar(Calendar):
     def _init_views(self) -> dict[CalendarScope, CalendarScopeView]:
         return {
@@ -98,16 +92,16 @@ class CustomCalendar(Calendar):
                 self._item_callback_data,
                 date_text=MarkedDay("🔴", DATE_TEXT),
                 today_text=MarkedDay("⭕", TODAY_TEXT),
-                header_text="~~~~~ " + Month() + " ~~~~~",
+                header_text=Format("~~~~~ {date:%B} ~~~~~"),
                 weekday_text=WeekDay(),
-                next_month_text=Month() + " >>",
-                prev_month_text="<< " + Month(),
+                next_month_text=Format("{date:%B} >>"),
+                prev_month_text=Format("<< {date:%B}"),
             ),
             CalendarScope.MONTHS: CalendarMonthView(
                 self._item_callback_data,
-                month_text=Month(),
-                header_text="~~~~~ " + Format("{date:%Y}") + " ~~~~~",
-                this_month_text="[" + Month() + "]",
+                month_text=Format("{date:%B}"),
+                header_text=Format("~~~~~ {date:%Y} ~~~~~"),
+                this_month_text=Format("[{date:%B}]"),
             ),
             CalendarScope.YEARS: CalendarYearsView(self._item_callback_data),
         }
@@ -117,9 +111,6 @@ class MySG(StatesGroup):
     window1 = State()
     window2 = State()
     window3 = State()
-
-# Глобальная переменная — не идеально, но для простоты
-g_selected_date = None
 
 # ============= DIALOG CALLBACKS =============
 async def win1_on_date_selected(callback: CallbackQuery, widget, manager: DialogManager, selected_date: date):
@@ -182,28 +173,6 @@ async def getter(dialog_manager: DialogManager, event_from_user, **kwargs):
 
     return {
         "date": selected_date.isoformat() if selected_date else "—",
-        "author_user": author,
-        "times": ", ".join(checked) if checked else "—",
-    }
-
-
-async def getter(dialog_manager: DialogManager, event_from_user, **kwargs):
-    global g_selected_date
-    checked = dialog_manager.find("m_time_slots").get_checked()
-    author = event_from_user.username or f"user_{event_from_user.id}"
-    name = author
-
-    if checked and g_selected_date:
-        conn = await asyncpg.connect(DATABASE_URL)
-        for t in checked:
-            await conn.execute(
-                "INSERT INTO book (name, date, time, author) VALUES ($1, $2, $3, $4)",
-                name, g_selected_date.isoformat(), t, author
-            )
-        await conn.close()
-
-    return {
-        "date": g_selected_date.isoformat() if g_selected_date else "—",
         "author_user": author,
         "times": ", ".join(checked) if checked else "—",
     }
