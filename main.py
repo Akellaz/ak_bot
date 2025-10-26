@@ -247,11 +247,18 @@ async def on_startup():
 
 @app.post(WEBHOOK_PATH)
 async def bot_webhook(request: Request):
-    secret = request.headers.get("X-Telegram-Bot-Api-Secret-Token")
-    if secret != WEBHOOK_SECRET:
-        return {"error": "Invalid secret"}
-    update = await request.json()
-    await dp.feed_raw_update(bot, update)
+    try:
+        secret = request.headers.get("X-Telegram-Bot-Api-Secret-Token")
+        if secret != WEBHOOK_SECRET:
+            return {"error": "Invalid secret"}
+        update = await request.json()
+        await dp.feed_raw_update(bot, update)
+        return {"status": "ok"}
+    except Exception as e:
+        print(f"Webhook error: {e}")
+        import traceback
+        traceback.print_exc()
+        return {"error": str(e)}
 
 @app.get("/dashboard")
 async def dashboard():
