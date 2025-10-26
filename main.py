@@ -314,8 +314,24 @@ async def dashboard(request: Request):
     from datetime import datetime, timedelta
     
     # Получаем параметры фильтрации
-    date_from = request.query_params.get("date_from")
-    date_to = request.query_params.get("date_to")
+    date_from_str = request.query_params.get("date_from")
+    date_to_str = request.query_params.get("date_to")
+    
+    # Преобразуем строки в объекты date
+    date_from = None
+    date_to = None
+    
+    if date_from_str:
+        try:
+            date_from = date.fromisoformat(date_from_str)
+        except ValueError:
+            pass
+    
+    if date_to_str:
+        try:
+            date_to = date.fromisoformat(date_to_str)
+        except ValueError:
+            pass
     
     conn = await asyncpg.connect(DATABASE_URL)
     
@@ -389,6 +405,7 @@ async def dashboard(request: Request):
     # Используем f-строки вместо .format для избежания конфликтов
     current_time_str = datetime.now().strftime("%d.%m.%Y %H:%M")
     
+    # Для формы фильтрации используем исходные строки
     html = f"""<!DOCTYPE html>
     <html>
     <head>
@@ -574,11 +591,11 @@ async def dashboard(request: Request):
                 <form class="filter-form" method="get">
                     <div class="filter-group">
                         <label for="date_from">С даты:</label>
-                        <input type="date" id="date_from" name="date_from" value="{date_from or ''}">
+                        <input type="date" id="date_from" name="date_from" value="{date_from_str or ''}">
                     </div>
                     <div class="filter-group">
                         <label for="date_to">По дату:</label>
-                        <input type="date" id="date_to" name="date_to" value="{date_to or ''}">
+                        <input type="date" id="date_to" name="date_to" value="{date_to_str or ''}">
                     </div>
                     <div class="filter-group">
                         <button type="submit">🔍 Фильтровать</button>
@@ -679,7 +696,7 @@ async def dashboard(request: Request):
         <script>
             function deleteBooking(bookingId) {{
                 if (confirm('Вы уверены, что хотите удалить это бронирование?')) {{
-                    fetch(`/delete_booking/${{bookingId}}`, {{
+                    fetch('/delete_booking/' + bookingId, {{
                         method: 'POST',
                         headers: {{
                             'Content-Type': 'application/json',
@@ -706,8 +723,8 @@ async def dashboard(request: Request):
     
     return HTMLResponse(html)
 
-# Добавьте новый endpoint для удаления бронирований
-@app.post("/delete_booking/{{booking_id}}")
+# Исправленный endpoint для удаления бронирований (без двойных скобок)
+@app.post("/delete_booking/{booking_id}")
 async def delete_booking(booking_id: int):
     conn = await asyncpg.connect(DATABASE_URL)
     try:
@@ -718,6 +735,7 @@ async def delete_booking(booking_id: int):
             return {"status": "error", "message": "Бронирование не найдено"}
     finally:
         await conn.close()
+
 
 
 
