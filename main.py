@@ -48,7 +48,7 @@ if not DATABASE_URL:
 
 WEB_SERVER_HOST = "0.0.0.0"
 WEB_SERVER_PORT = int(os.getenv("PORT", 8000))
-BASE_WEBHOOK_URL = os.getenv("RENDER_EXTERNAL_URL", "https://your-render-url.onrender.com").rstrip()
+BASE_WEBHOOK_URL = os.getenv("RENDER_EXTERNAL_URL", f"https://your-render-url.onrender.com")
 
 # ============= DB =============
 async def init_db():
@@ -74,7 +74,8 @@ class WeekDay(Text):
         return get_day_names(width="short", context="stand-alone", locale=locale)[selected_date.weekday()].title()
 
 class MarkedDay(Text):
-    def __init__(self, mark: str, other: Text):
+    def __init__(self, mark: str, other):
+        super().__init__()
         self.mark = mark
         self.other = other
 
@@ -113,29 +114,49 @@ class CustomCalendar(Calendar):
             ),
         }
 
-# ============= STATES =============
+# ============= STATES & GLOBAL =============
 class MySG(StatesGroup):
     window1 = State()
     window2 = State()
     window3 = State()
 
-# ============= CALLBACKS =============
+# ============= DIALOG CALLBACKS =============
 async def win1_on_date_selected(callback: CallbackQuery, widget, manager: DialogManager, selected_date: date):
+    print(f"=== Date selected ===")
+    print(f"Selected date: {selected_date}")
+    print(f"User: {callback.from_user.username}")
+    
+    # Сохраняем выбранную дату в dialog_data
     manager.dialog_data["selected_date"] = selected_date.isoformat()
-    await manager.next()
+    print(f"Saved to dialog_data: {selected_date.isoformat()}")
+    
+    # Пробуем перейти к следующему состоянию
+    try:
+        await manager.next()
+        print("Successfully moved to next state")
+    except Exception as e:
+        print(f"Error in manager.next(): {e}")
+        import traceback
+        traceback.print_exc()
 
 async def get_time(dialog_manager: DialogManager, event_from_user, **kwargs):
+    print("get_time called")
     selected_date_str = dialog_manager.dialog_data.get("selected_date")
+    print(f"Selected date string: {selected_date_str}")
+    
     if not selected_date_str:
         return {"time_slots": [], "time_slots2": [], "count": 0, "count2": 0}
     
     try:
+        # Преобразуем строку в объект date
         selected_date = date.fromisoformat(selected_date_str)
-    except ValueError:
+        print(f"Parsed date: {selected_date}")
+    except ValueError as e:
+        print(f"Date parsing error: {e}")
         return {"time_slots": [], "time_slots2": [], "count": 0, "count2": 0}
 
     conn = await asyncpg.connect(DATABASE_URL)
-    # 🔧 ИСПРАВЛЕНО: передаём selected_date (объект date), а не строку
+    # Передаем объект date, а не строку
     rows = await conn.fetch("SELECT time FROM book WHERE date = $1", selected_date)
     booked_times = {row["time"] for row in rows}
     await conn.close()
@@ -146,14 +167,17 @@ async def get_time(dialog_manager: DialogManager, event_from_user, **kwargs):
     time_slots = [(t, t) for t in time_slots_zero1 if t not in booked_times]
     time_slots2 = [(t, t) for t in time_slots_zero2 if t not in booked_times]
 
-    return {
+    result = {
         "time_slots": time_slots,
         "time_slots2": time_slots2,
         "count": len(time_slots),
         "count2": len(time_slots2),
     }
+    print(f"Time slots result: {result}")
+    return result
 
 async def getter(dialog_manager: DialogManager, event_from_user, **kwargs):
+    print("getter called - final step")
     selected_date_str = dialog_manager.dialog_data.get("selected_date")
     if selected_date_str:
         try:
@@ -163,31 +187,28 @@ async def getter(dialog_manager: DialogManager, event_from_user, **kwargs):
     else:
         selected_date = None
         
-    # 🔧 ИСПРАВЛЕНО: получаем выбор из обоих Multiselect
-    m1 = dialog_manager.find("m_time_slots")
-    m2 = dialog_manager.find("m_time_slots2")
-    checked1 = m1.get_checked() if m1 else []
-    checked2 = m2.get_checked() if m2 else []
-    checked = list(checked1) + list(checked2)
-
+    checked = dialog_manager.find("m_time_slots").get_checked()
     author = event_from_user.username or f"user_{event_from_user.id}"
     name = author
 
     if checked and selected_date:
+        print(f"Saving booking: date={selected_date}, times={checked}, author={author}")
         conn = await asyncpg.connect(DATABASE_URL)
         for t in checked:
-            # 🔧 ИСПРАВЛЕНО: передаём selected_date (объект date), а не строку
             await conn.execute(
                 "INSERT INTO book (name, date, time, author) VALUES ($1, $2, $3, $4)",
-                name, selected_date, t, author
+                name, selected_date, t, author  # Передаем объект date, а не строку
             )
         await conn.close()
+        print("Booking saved successfully")
 
-    return {
+    result = {
         "date": selected_date.isoformat() if selected_date else "—",
         "author_user": author,
         "times": ", ".join(checked) if checked else "—",
     }
+    print(f"Getter result: {result}")
+    return result
 
 # ============= DIALOG =============
 dialog = Dialog(
@@ -238,6 +259,7 @@ storage = MemoryStorage()
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(storage=storage)
 
+# Регистрируем диалог и настраиваем
 dp.include_router(dialog)
 setup_dialogs(dp)
 
@@ -281,7 +303,7 @@ async def dashboard():
             <tr><th>Дата</th><th>Время</th><th>Автор</th></tr>
     """
     for r in rows:
-        html += f"<tr><td>{r['date']}</td><td>{r['time']}</td><td>@{r['author'] or '—'}</td></tr>"
+        html += f"<tr><td>{r['date']}</td><td>{r['time']}</td><td>@{r['author']}</td></tr>"
     html += "</table></body></html>"
     return HTMLResponse(html)
 
@@ -289,10 +311,13 @@ async def dashboard():
 async def root():
     return {"status": "OK", "dashboard": "/dashboard"}
 
+# Правильный хендлер для /start
 @dp.message(Command("start"))
 async def start(message: Message, dialog_manager: DialogManager):
+    print(f"/start command received from {message.from_user.username}")
     await dialog_manager.start(MySG.window1, mode=StartMode.RESET_STACK)
+    print("Dialog started")
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=WEB_SERVER_PORT)
+    uvicorn.run(app, host="0.0.0.0", port=8000)
