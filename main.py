@@ -37,7 +37,7 @@ import operator
 
 # ============= CONFIG =============
 WEBHOOK_PATH = "/webhook"
-WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "your-secret-here")  # лучше задать в Render
+WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "your-secret-here")
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 DATABASE_URL = os.getenv("DATABASE_URL")
 
@@ -47,7 +47,7 @@ if not DATABASE_URL:
     raise ValueError("DATABASE_URL is required")
 
 WEB_SERVER_HOST = "0.0.0.0"
-WEB_SERVER_PORT = int(os.getenv("PORT", 8000))  # Render требует PORT
+WEB_SERVER_PORT = int(os.getenv("PORT", 8000))
 BASE_WEBHOOK_URL = os.getenv("RENDER_EXTERNAL_URL", f"https://your-render-url.onrender.com")
 
 # ============= DB =============
@@ -121,12 +121,10 @@ class MySG(StatesGroup):
 
 # ============= DIALOG CALLBACKS =============
 async def win1_on_date_selected(callback: CallbackQuery, widget, manager: DialogManager, selected_date: date):
-    # Сохраняем выбранную дату в dialog_data вместо глобальной переменной
     manager.dialog_data["selected_date"] = selected_date.isoformat()
     await manager.next()
 
 async def get_time(dialog_manager: DialogManager, event_from_user, **kwargs):
-    # Получаем дату из dialog_data
     selected_date_str = dialog_manager.dialog_data.get("selected_date")
     if not selected_date_str:
         return {"time_slots": [], "time_slots2": [], "count": 0, "count2": 0}
@@ -155,7 +153,6 @@ async def get_time(dialog_manager: DialogManager, event_from_user, **kwargs):
     }
 
 async def getter(dialog_manager: DialogManager, event_from_user, **kwargs):
-    # Получаем дату из dialog_data
     selected_date_str = dialog_manager.dialog_data.get("selected_date")
     if selected_date_str:
         try:
@@ -206,7 +203,7 @@ dialog = Dialog(
         Multiselect(
             Format("✓ {item[0]}"),
             Format("{item[0]}"),
-            id="m_time_slots2",  # ← ВАЖНО: уникальный ID!
+            id="m_time_slots2",
             item_id_getter=operator.itemgetter(1),
             items="time_slots2",
         ),
@@ -233,10 +230,8 @@ storage = MemoryStorage()
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(storage=storage)
 
-# Сначала регистрируем диалог
+# Регистрируем диалог и настраиваем
 dp.include_router(dialog)
-
-# Потом настраиваем диалоги
 setup_dialogs(dp)
 
 @app.on_event("startup")
@@ -287,11 +282,11 @@ async def dashboard():
 async def root():
     return {"status": "OK", "dashboard": "/dashboard"}
 
+# Правильный хендлер для /start
 @dp.message(Command("start"))
 async def start(message: Message, dialog_manager: DialogManager):
     await dialog_manager.start(MySG.window1, mode=StartMode.RESET_STACK)
 
-# @dp.message()  # Уберите этот хэндлер для тестирования
-# async def debug_message(message: Message):
-#     print(f"Received message: {message.text} from {message.from_user.username}")
-#     await message.answer(f"Получил: {message.text}")
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)
