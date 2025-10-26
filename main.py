@@ -48,7 +48,7 @@ if not DATABASE_URL:
 
 WEB_SERVER_HOST = "0.0.0.0"
 WEB_SERVER_PORT = int(os.getenv("PORT", 8000))
-BASE_WEBHOOK_URL = os.getenv("RENDER_EXTERNAL_URL", f"https://your-render-url.onrender.com")
+BASE_WEBHOOK_URL = os.getenv("RENDER_EXTERNAL_URL", "https://your-render-url.onrender.com").rstrip()
 
 # ============= DB =============
 async def init_db():
@@ -67,15 +67,14 @@ async def init_db():
 # ============= CALENDAR WIDGETS =============
 SELECTED_DAYS_KEY = "selected_dates"
 
-class WeekDay(Text):  # Наследуемся от Text
+class WeekDay(Text):
     async def _render_text(self, data, manager: DialogManager) -> str:
         selected_date: date = data["date"]
         locale = manager.event.from_user.language_code or "en"
         return get_day_names(width="short", context="stand-alone", locale=locale)[selected_date.weekday()].title()
 
-class MarkedDay(Text):  # Наследуемся от Text
-    def __init__(self, mark: str, other):
-        super().__init__()  # Вызываем родительский конструктор
+class MarkedDay(Text):
+    def __init__(self, mark: str, other: Text):
         self.mark = mark
         self.other = other
 
@@ -114,13 +113,13 @@ class CustomCalendar(Calendar):
             ),
         }
 
-# ============= STATES & GLOBAL =============
+# ============= STATES =============
 class MySG(StatesGroup):
     window1 = State()
     window2 = State()
     window3 = State()
 
-# ============= DIALOG CALLBACKS =============
+# ============= CALLBACKS =============
 async def win1_on_date_selected(callback: CallbackQuery, widget, manager: DialogManager, selected_date: date):
     manager.dialog_data["selected_date"] = selected_date.isoformat()
     await manager.next()
@@ -136,7 +135,8 @@ async def get_time(dialog_manager: DialogManager, event_from_user, **kwargs):
         return {"time_slots": [], "time_slots2": [], "count": 0, "count2": 0}
 
     conn = await asyncpg.connect(DATABASE_URL)
-    rows = await conn.fetch("SELECT time FROM book WHERE date = $1", selected_date.isoformat())
+    # 🔧 ИСПРАВЛЕНО: передаём selected_date (объект date), а не строку
+    rows = await conn.fetch("SELECT time FROM book WHERE date = $1", selected_date)
     booked_times = {row["time"] for row in rows}
     await conn.close()
 
@@ -163,16 +163,23 @@ async def getter(dialog_manager: DialogManager, event_from_user, **kwargs):
     else:
         selected_date = None
         
-    checked = dialog_manager.find("m_time_slots").get_checked()
+    # 🔧 ИСПРАВЛЕНО: получаем выбор из обоих Multiselect
+    m1 = dialog_manager.find("m_time_slots")
+    m2 = dialog_manager.find("m_time_slots2")
+    checked1 = m1.get_checked() if m1 else []
+    checked2 = m2.get_checked() if m2 else []
+    checked = list(checked1) + list(checked2)
+
     author = event_from_user.username or f"user_{event_from_user.id}"
     name = author
 
     if checked and selected_date:
         conn = await asyncpg.connect(DATABASE_URL)
         for t in checked:
+            # 🔧 ИСПРАВЛЕНО: передаём selected_date (объект date), а не строку
             await conn.execute(
                 "INSERT INTO book (name, date, time, author) VALUES ($1, $2, $3, $4)",
-                name, selected_date.isoformat(), t, author
+                name, selected_date, t, author
             )
         await conn.close()
 
@@ -231,7 +238,6 @@ storage = MemoryStorage()
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(storage=storage)
 
-# Регистрируем диалог и настраиваем
 dp.include_router(dialog)
 setup_dialogs(dp)
 
@@ -275,7 +281,7 @@ async def dashboard():
             <tr><th>Дата</th><th>Время</th><th>Автор</th></tr>
     """
     for r in rows:
-        html += f"<tr><td>{r['date']}</td><td>{r['time']}</td><td>@{r['author']}</td></tr>"
+        html += f"<tr><td>{r['date']}</td><td>{r['time']}</td><td>@{r['author'] or '—'}</td></tr>"
     html += "</table></body></html>"
     return HTMLResponse(html)
 
@@ -283,11 +289,10 @@ async def dashboard():
 async def root():
     return {"status": "OK", "dashboard": "/dashboard"}
 
-# Правильный хендлер для /start
 @dp.message(Command("start"))
 async def start(message: Message, dialog_manager: DialogManager):
     await dialog_manager.start(MySG.window1, mode=StartMode.RESET_STACK)
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="0.0.0.0", port=WEB_SERVER_PORT)
