@@ -27,6 +27,7 @@ from aiogram_dialog.widgets.kbd.calendar_kbd import (
     CalendarYearsView,
     CalendarScope,
     CalendarScopeView,
+    CalendarConfig,
 )
 from aiogram.filters.state import StatesGroup, State
 from aiogram.types import CallbackQuery
@@ -87,9 +88,11 @@ class MarkedDay:
 
 class CustomCalendar(Calendar):
     def _init_views(self) -> dict[CalendarScope, CalendarScopeView]:
+        config = CalendarConfig()
         return {
             CalendarScope.DAYS: CalendarDaysView(
                 self._item_callback_data,
+                config=config,
                 date_text=MarkedDay("🔴", DATE_TEXT),
                 today_text=MarkedDay("⭕", TODAY_TEXT),
                 header_text=Format("~~~~~ {date:%B} ~~~~~"),
@@ -99,11 +102,15 @@ class CustomCalendar(Calendar):
             ),
             CalendarScope.MONTHS: CalendarMonthView(
                 self._item_callback_data,
+                config=config,
                 month_text=Format("{date:%B}"),
                 header_text=Format("~~~~~ {date:%Y} ~~~~~"),
                 this_month_text=Format("[{date:%B}]"),
             ),
-            CalendarScope.YEARS: CalendarYearsView(self._item_callback_data),
+            CalendarScope.YEARS: CalendarYearsView(
+                self._item_callback_data,
+                config=config,
+            ),
         }
 
 # ============= STATES & GLOBAL =============
