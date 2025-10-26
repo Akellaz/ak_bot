@@ -24,6 +24,7 @@ from aiogram_dialog.widgets.kbd.calendar_kbd import (
     CalendarMonthView,
     CalendarYearsView,
     CalendarScope,
+    CalendarScopeView,
     CalendarConfig,  # убрано CalendarScopeView — не используется
 )
 from aiogram.filters.state import StatesGroup, State
