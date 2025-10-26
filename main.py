@@ -18,7 +18,7 @@ from aiogram_dialog.widgets.kbd import (
     Back,
     Button,
 )
-from aiogram_dialog.widgets.text import Const, Format, Jinja
+from aiogram_dialog.widgets.text import Const, Format, Jinja, Text
 from aiogram_dialog.widgets.kbd.calendar_kbd import (
     DATE_TEXT,
     TODAY_TEXT,
@@ -67,14 +67,15 @@ async def init_db():
 # ============= CALENDAR WIDGETS =============
 SELECTED_DAYS_KEY = "selected_dates"
 
-class WeekDay:
+class WeekDay(Text):  # Наследуемся от Text
     async def _render_text(self, data, manager: DialogManager) -> str:
         selected_date: date = data["date"]
         locale = manager.event.from_user.language_code or "en"
         return get_day_names(width="short", context="stand-alone", locale=locale)[selected_date.weekday()].title()
 
-class MarkedDay:
+class MarkedDay(Text):  # Наследуемся от Text
     def __init__(self, mark: str, other):
+        super().__init__()  # Вызываем родительский конструктор
         self.mark = mark
         self.other = other
 
