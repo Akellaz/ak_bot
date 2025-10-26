@@ -123,17 +123,23 @@ g_selected_date = None
 
 # ============= DIALOG CALLBACKS =============
 async def win1_on_date_selected(callback: CallbackQuery, widget, manager: DialogManager, selected_date: date):
-    global g_selected_date
-    g_selected_date = selected_date
+    # Сохраняем выбранную дату в dialog_data вместо глобальной переменной
+    manager.dialog_data["selected_date"] = selected_date.isoformat()
     await manager.next()
 
 async def get_time(dialog_manager: DialogManager, event_from_user, **kwargs):
-    global g_selected_date
-    if not g_selected_date:
+    # Получаем дату из dialog_data
+    selected_date_str = dialog_manager.dialog_data.get("selected_date")
+    if not selected_date_str:
+        return {"time_slots": [], "time_slots2": [], "count": 0, "count2": 0}
+    
+    try:
+        selected_date = date.fromisoformat(selected_date_str)
+    except ValueError:
         return {"time_slots": [], "time_slots2": [], "count": 0, "count2": 0}
 
     conn = await asyncpg.connect(DATABASE_URL)
-    rows = await conn.fetch("SELECT time FROM book WHERE date = $1", g_selected_date.isoformat())
+    rows = await conn.fetch("SELECT time FROM book WHERE date = $1", selected_date.isoformat())
     booked_times = {row["time"] for row in rows}
     await conn.close()
 
@@ -149,6 +155,37 @@ async def get_time(dialog_manager: DialogManager, event_from_user, **kwargs):
         "count": len(time_slots),
         "count2": len(time_slots2),
     }
+
+async def getter(dialog_manager: DialogManager, event_from_user, **kwargs):
+    # Получаем дату из dialog_data
+    selected_date_str = dialog_manager.dialog_data.get("selected_date")
+    if selected_date_str:
+        try:
+            selected_date = date.fromisoformat(selected_date_str)
+        except ValueError:
+            selected_date = None
+    else:
+        selected_date = None
+        
+    checked = dialog_manager.find("m_time_slots").get_checked()
+    author = event_from_user.username or f"user_{event_from_user.id}"
+    name = author
+
+    if checked and selected_date:
+        conn = await asyncpg.connect(DATABASE_URL)
+        for t in checked:
+            await conn.execute(
+                "INSERT INTO book (name, date, time, author) VALUES ($1, $2, $3, $4)",
+                name, selected_date.isoformat(), t, author
+            )
+        await conn.close()
+
+    return {
+        "date": selected_date.isoformat() if selected_date else "—",
+        "author_user": author,
+        "times": ", ".join(checked) if checked else "—",
+    }
+
 
 async def getter(dialog_manager: DialogManager, event_from_user, **kwargs):
     global g_selected_date
